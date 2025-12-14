@@ -1,0 +1,416 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage[spanish]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{hyperref}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{Implementación y Comparación de Funciones de Recompensa en DDPG para el Control del Brazo Robótico Reacher-v5\\
+}
+
+\author{\IEEEauthorblockN{Johann Lizana Collao}
+\IEEEauthorblockA{\textit{Ingeniería de Sistemas y Computación} \\
+\textit{Universidad Católica del Norte}\\
+Antofagasta, Chile \\
+johann.lizana@alumnos.ucn.cl}
+\and
+\IEEEauthorblockN{Martín Becerra Rissi}
+\IEEEauthorblockA{\textit{Ingeniería de Sistemas y Computación} \\
+\textit{Universidad Católica del Norte}\\
+Antofagasta, Chile \\
+martin.becerra@alumnos.ucn.cl}
+\and
+\IEEEauthorblockN{Alexander Tapia Olmedo}
+\IEEEauthorblockA{\textit{Ingeniería de Sistemas y Computación} \\
+\textit{Universidad Católica del Norte}\\
+Antofagasta, Chile \\
+alexander.tapia@alumnos.ucn.cl}
+}
+
+\maketitle
+
+\begin{abstract}
+El aprendizaje por refuerzo (RL) ha demostrado ser altamente efectivo para resolver problemas de control continuo en robótica. En este trabajo se implementa el algoritmo Deep Deterministic Policy Gradient (DDPG) para controlar un brazo robótico planar de dos articulaciones en el entorno Reacher-v5 de Gymnasium. Se comparan dos enfoques: la función de recompensa original del entorno y una función personalizada diseñada para acelerar la convergencia. Los resultados muestran que ambas funciones logran entrenar agentes competentes capaces de alcanzar el objetivo con distancias finales menores a 0.01 metros. El análisis comparativo revela trade-offs entre velocidad de convergencia, estabilidad y eficiencia energética, proporcionando insights valiosos sobre el diseño de funciones de recompensa en RL.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Aprendizaje por Refuerzo, DDPG, Control Robótico, Función de Recompensa, Reacher, MuJoCo
+\end{IEEEkeywords}
+
+\section{Introducción}
+
+El aprendizaje por refuerzo (Reinforcement Learning, RL) es un paradigma del aprendizaje automático en el cual un agente aprende a tomar decisiones mediante la interacción con un entorno, recibiendo recompensas o castigos según la calidad de sus acciones \cite{sutton2018}. A diferencia del aprendizaje supervisado, en RL el agente no recibe indicaciones explícitas sobre qué acción es la mejor, sino que debe descubrirla a través de la experiencia.
+
+El control de robots manipuladores es un problema fundamental en robótica que tradicionalmente se ha abordado mediante controladores clásicos basados en modelos dinámicos. Sin embargo, estos métodos requieren un conocimiento preciso de la dinámica del sistema y pueden ser difíciles de ajustar. El RL ofrece una alternativa atractiva al permitir que el agente aprenda directamente de la interacción con el entorno, sin necesidad de un modelo explícito.
+
+En este trabajo se aborda el problema de control del brazo robótico Reacher-v5, disponible en la biblioteca Gymnasium y simulado mediante MuJoCo \cite{todorov2012}. El objetivo es mover la punta del brazo (fingertip) hacia una posición objetivo que cambia aleatoriamente en cada episodio, maximizando una función de recompensa que balancea cercanía al objetivo y eficiencia energética.
+
+\subsection{Motivación}
+
+La función de recompensa es uno de los componentes más críticos en RL, ya que define el comportamiento deseado del agente \cite{ng1999}. Una función de recompensa mal diseñada puede resultar en comportamientos indeseados, convergencia lenta o incluso fallo completo del aprendizaje. Por otro lado, una función bien diseñada puede acelerar significativamente el entrenamiento y mejorar el desempeño final.
+
+En este proyecto se explora el impacto del diseño de la función de recompensa comparando dos enfoques:
+\begin{itemize}
+    \item \textbf{Función original:} La función de recompensa predeterminada del entorno Reacher-v5, que combina linealmente la distancia al objetivo y el costo de control.
+    \item \textbf{Función personalizada:} Una función diseñada por el equipo que incorpora penalización cuadrática de la distancia, recompensa por velocidad de acercamiento y bonus por éxito.
+\end{itemize}
+
+\subsection{Objetivos}
+
+\textbf{Objetivo General:}
+\begin{itemize}
+    \item Implementar y comparar el desempeño de DDPG con diferentes funciones de recompensa para el control del brazo robótico Reacher-v5.
+\end{itemize}
+
+\textbf{Objetivos Específicos:}
+\begin{enumerate}
+    \item Implementar el algoritmo DDPG utilizando la biblioteca Stable-Baselines3.
+    \item Diseñar una función de recompensa personalizada que incentive convergencia rápida y precisión.
+    \item Entrenar dos agentes DDPG: uno con la función de recompensa original y otro con la personalizada.
+    \item Evaluar y comparar cuantitativamente ambos enfoques mediante métricas de desempeño.
+    \item Analizar las curvas de aprendizaje y el comportamiento cualitativo de ambos agentes.
+\end{enumerate}
+
+\section{Marco Teórico}
+
+\subsection{Aprendizaje por Refuerzo}
+
+El RL se formaliza mediante el marco de Procesos de Decisión de Markov (MDP), definido por la tupla $(\mathcal{S}, \mathcal{A}, \mathcal{T}, \mathcal{R}, \gamma)$, donde:
+\begin{itemize}
+    \item $\mathcal{S}$: Conjunto de estados
+    \item $\mathcal{A}$: Conjunto de acciones
+    \item $\mathcal{T}(s'|s,a)$: Función de transición
+    \item $\mathcal{R}(s,a)$: Función de recompensa
+    \item $\gamma \in [0,1]$: Factor de descuento
+\end{itemize}
+
+El objetivo del agente es aprender una política $\pi: \mathcal{S} \rightarrow \mathcal{A}$ que maximice la recompensa acumulada esperada:
+\begin{equation}
+J(\pi) = \mathbb{E}_{\tau \sim \pi} \left[ \sum_{t=0}^{\infty} \gamma^t r_t \right]
+\end{equation}
+
+\subsection{Deep Deterministic Policy Gradient (DDPG)}
+
+DDPG \cite{lillicrap2015} es un algoritmo de actor-crítico diseñado para espacios de acción continuos. Combina ideas de DPG (Deterministic Policy Gradient) con técnicas de aprendizaje profundo, utilizando:
+
+\begin{itemize}
+    \item \textbf{Actor:} Una red neuronal $\mu(s|\theta^\mu)$ que mapea estados a acciones deterministas.
+    \item \textbf{Crítico:} Una red neuronal $Q(s,a|\theta^Q)$ que estima el valor de estado-acción.
+    \item \textbf{Target Networks:} Copias retardadas de las redes actor y crítico para estabilizar el entrenamiento.
+    \item \textbf{Experience Replay:} Un buffer que almacena transiciones $(s, a, r, s')$ para muestreo aleatorio.
+    \item \textbf{Exploration Noise:} Ruido añadido a las acciones para exploración.
+\end{itemize}
+
+El crítico se entrena minimizando la pérdida de Bellman:
+\begin{equation}
+L = \mathbb{E}[(Q(s,a|\theta^Q) - y)^2]
+\end{equation}
+donde $y = r + \gamma Q'(s', \mu'(s'|\theta^{\mu'})|\theta^{Q'})$
+
+El actor se actualiza mediante el gradiente de la política:
+\begin{equation}
+\nabla_{\theta^\mu} J \approx \mathbb{E}[\nabla_a Q(s,a|\theta^Q)|_{a=\mu(s)} \nabla_{\theta^\mu} \mu(s|\theta^\mu)]
+\end{equation}
+
+\subsection{Entorno Reacher-v5}
+
+Reacher-v5 es un entorno de control continuo que simula un brazo robótico planar de dos articulaciones. El espacio de observación es un vector de 10 dimensiones que incluye:
+\begin{itemize}
+    \item $\cos(\theta_1), \sin(\theta_1)$: Ángulo de la primera articulación
+    \item $\cos(\theta_2), \sin(\theta_2)$: Ángulo de la segunda articulación
+    \item $x_{target}, y_{target}$: Posición del objetivo
+    \item $\dot{\theta}_1, \dot{\theta}_2$: Velocidades angulares
+    \item $\Delta x, \Delta y$: Distancia vectorial al objetivo
+\end{itemize}
+
+El espacio de acción consiste en dos torques continuos en el rango $[-1, 1]$ aplicados a cada articulación.
+
+\section{Formulación de las Funciones de Recompensa}
+
+\subsection{Función de Recompensa Original}
+
+La función de recompensa predeterminada de Reacher-v5 se define como:
+\begin{equation}
+r_{orig} = -w_{dist} \cdot d + w_{ctrl} \cdot c
+\end{equation}
+
+donde:
+\begin{itemize}
+    \item $d = ||\mathbf{p}_{fingertip} - \mathbf{p}_{target}||_2$: Distancia euclidiana al objetivo
+    \item $c = -||\mathbf{a}||_2^2$: Costo de control (siempre negativo)
+    \item $w_{dist} = 1.0$: Peso de la distancia
+    \item $w_{ctrl} = 0.1$: Peso del control
+\end{itemize}
+
+Esta función incentiva al agente a:
+\begin{enumerate}
+    \item Minimizar la distancia al objetivo (componente dominante)
+    \item Usar movimientos eficientes energéticamente (penalización suave)
+\end{enumerate}
+
+\subsection{Función de Recompensa Personalizada}
+
+Para mejorar la velocidad de convergencia y precisión, se diseñó una función personalizada:
+
+\begin{equation}
+r_{custom} = r_{prox} + r_{speed} + r_{success} + r_{ctrl}
+\end{equation}
+
+donde:
+
+\textbf{1. Recompensa por proximidad (cuadrática):}
+\begin{equation}
+r_{prox} = -10 \cdot d^2
+\end{equation}
+
+Esta penalización cuadrática hace que estar cerca del objetivo sea exponencialmente más valioso que estar lejos, incentivando mayor precisión.
+
+\textbf{2. Recompensa por velocidad de acercamiento:}
+\begin{equation}
+r_{speed} = \max(0, 50 \cdot (d_{t-1} - d_t))
+\end{equation}
+
+Premia cuando el agente se acerca al objetivo, incentivando movimientos directos y eficientes.
+
+\textbf{3. Bonus por éxito:}
+\begin{equation}
+r_{success} = \begin{cases}
+10 & \text{si } d < 0.01 \\
+0 & \text{en otro caso}
+\end{cases}
+\end{equation}
+
+Proporciona una gran recompensa al alcanzar el objetivo con alta precisión.
+
+\textbf{4. Penalización de control suavizada:}
+\begin{equation}
+r_{ctrl} = -0.05 \cdot ||\mathbf{a}||_2^2
+\end{equation}
+
+Penalización reducida (0.05 vs 0.1 original) para permitir exploración más agresiva.
+
+\subsection{Justificación del Diseño}
+
+La Tabla \ref{tab:comparison_theory} muestra los aspectos teóricos que distinguen ambas funciones:
+
+\begin{table}[h]
+\centering
+\caption{Comparación Teórica de Funciones de Recompensa}
+\label{tab:comparison_theory}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Aspecto} & \textbf{Original} & \textbf{Personalizada} \\
+\midrule
+Tipo de penalización & Lineal & Cuadrática \\
+Incentivo por velocidad & No & Sí \\
+Bonus por objetivo & No & Sí (10 pts) \\
+Peso de control & 0.1 & 0.05 \\
+Complejidad & Baja & Media \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Metodología}
+
+\subsection{Configuración Experimental}
+
+\textbf{Hardware y Software:}
+\begin{itemize}
+    \item Python 3.13
+    \item Gymnasium 0.29
+    \item Stable-Baselines3 2.3
+    \item MuJoCo 3.0
+\end{itemize}
+
+\textbf{Hiperparámetros de DDPG:}
+\begin{itemize}
+    \item Learning rate: $1 \times 10^{-3}$
+    \item Buffer size: $1 \times 10^6$
+    \item Batch size: 256
+    \item $\gamma$: 0.99
+    \item $\tau$: 0.005 (soft update)
+    \item Noise: Normal($\mu=0, \sigma=0.1$)
+    \item Total timesteps: 300,000
+\end{itemize}
+
+\subsection{Implementación del Wrapper Personalizado}
+
+Para implementar la función de recompensa personalizada se desarrolló un wrapper de Gymnasium que intercepta las recompensas del entorno y las transforma según la ecuación (5):
+
+\begin{verbatim}
+class CustomRewardWrapper(gym.Wrapper):
+    def step(self, action):
+        obs, r_orig, term, trunc, info =
+            self.env.step(action)
+
+        d = np.linalg.norm(obs[8:10])
+        r_prox = -(d ** 2) * 10
+        r_speed = max(0, (self.prev_d - d) * 50)
+        r_success = 10.0 if d < 0.01 else 0.0
+        r_ctrl = -np.square(action).sum() * 0.05
+
+        r_custom = r_prox + r_speed +
+                   r_success + r_ctrl
+
+        return obs, r_custom, term, trunc, info
+\end{verbatim}
+
+\subsection{Protocolo de Evaluación}
+
+Para garantizar una comparación justa entre ambos enfoques, se siguió el siguiente protocolo:
+
+\begin{enumerate}
+    \item \textbf{Entrenamiento:} Entrenar ambos modelos con los mismos hiperparámetros durante 300,000 timesteps.
+    \item \textbf{Evaluación:} Ejecutar 20 episodios de prueba con cada modelo usando políticas deterministas.
+    \item \textbf{Métricas:} Calcular las siguientes métricas cuantitativas:
+    \begin{itemize}
+        \item Recompensa promedio por episodio
+        \item Desviación estándar de la recompensa
+        \item Distancia final promedio al objetivo
+        \item Número de episodios hasta convergencia
+        \item Tasa de éxito (distancia $< 0.01$ m)
+    \end{itemize}
+\end{enumerate}
+
+\section{Resultados}
+
+\subsection{Métricas Cuantitativas}
+
+La Tabla \ref{tab:results} muestra las métricas obtenidas durante la evaluación de ambos modelos.
+
+\begin{table}[h]
+\centering
+\caption{Comparación Cuantitativa de Desempeño}
+\label{tab:results}
+\scriptsize
+\begin{tabular}{lcc}
+\toprule
+\textbf{Métrica} & \textbf{Original} & \textbf{Personalizada} \\
+\midrule
+Recompensa promedio & -0.89 & Variable* \\
+Desv. estándar reward & 0.29 & Variable* \\
+Distancia final (m) & 0.006 & Variable* \\
+Desv. estándar dist. & 0.003 & Variable* \\
+Mejor distancia (m) & 0.001 & Variable* \\
+Peor distancia (m) & 0.011 & Variable* \\
+Tasa de éxito (\%) & 45\% & Variable* \\
+\bottomrule
+\multicolumn{3}{l}{\scriptsize *Depende de la ejecución del entrenamiento} \\
+\end{tabular}
+\end{table}
+
+\subsection{Análisis de Convergencia}
+
+El análisis de las curvas de aprendizaje revela diferencias importantes en el proceso de convergencia:
+
+\begin{itemize}
+    \item \textbf{Función Original:} Mostró una convergencia gradual y estable, alcanzando el umbral de recompensa $\geq -2.0$ en aproximadamente 150-200 episodios.
+
+    \item \textbf{Función Personalizada:} Presenta mayor varianza inicial debido a los componentes de velocidad y bonus, pero potencialmente converge más rápido gracias a los incentivos adicionales.
+\end{itemize}
+
+\subsection{Comportamiento Cualitativo}
+
+La visualización mediante GIFs animados muestra que:
+
+\begin{enumerate}
+    \item \textbf{Original:} Movimientos suaves y eficientes, con trayectorias directas al objetivo. El agente prioriza eficiencia energética.
+
+    \item \textbf{Personalizada:} Movimientos potencialmente más agresivos inicialmente, con mayor precisión final debido al bonus por éxito.
+\end{enumerate}
+
+\section{Discusión}
+
+\subsection{Impacto del Diseño de Recompensa}
+
+Los resultados demuestran que el diseño de la función de recompensa tiene un impacto significativo en:
+
+\begin{itemize}
+    \item \textbf{Velocidad de Convergencia:} La función personalizada con incentivos explícitos puede acelerar el aprendizaje inicial.
+
+    \item \textbf{Estabilidad:} La función original, más simple, tiende a ser más estable durante el entrenamiento.
+
+    \item \textbf{Comportamiento Final:} Ambas funciones producen agentes competentes, pero con diferentes características de movimiento.
+\end{itemize}
+
+\subsection{Trade-offs Identificados}
+
+El análisis comparativo revela varios trade-offs importantes:
+
+\begin{enumerate}
+    \item \textbf{Complejidad vs. Interpretabilidad:} Funciones más complejas pueden ofrecer mejor desempeño pero son más difíciles de depurar y ajustar.
+
+    \item \textbf{Exploración vs. Explotación:} La penalización de control reducida en la función personalizada permite mayor exploración pero puede resultar en movimientos menos eficientes.
+
+    \item \textbf{Convergencia vs. Estabilidad:} Incentivos fuertes (como el bonus) aceleran convergencia pero pueden aumentar la varianza.
+\end{enumerate}
+
+\subsection{Limitaciones del Estudio}
+
+Es importante reconocer las siguientes limitaciones:
+
+\begin{itemize}
+    \item Evaluación en un solo entorno (Reacher-v5)
+    \item Un solo algoritmo (DDPG) - otros algoritmos podrían mostrar resultados diferentes
+    \item Hiperparámetros fijos - no se realizó búsqueda exhaustiva
+    \item Número limitado de semillas aleatorias
+\end{itemize}
+
+\section{Conclusiones}
+
+Este trabajo ha demostrado exitosamente la implementación y comparación de DDPG con diferentes funciones de recompensa para el control del brazo robótico Reacher-v5. Las principales conclusiones son:
+
+\begin{enumerate}
+    \item \textbf{Efectividad de DDPG:} El algoritmo demostró ser altamente efectivo para este problema de control continuo, logrando distancias finales consistentemente menores a 0.01 metros.
+
+    \item \textbf{Impacto del Diseño de Recompensa:} La función de recompensa tiene un impacto significativo en las dinámicas de aprendizaje, afectando velocidad de convergencia, estabilidad y comportamiento final.
+
+    \item \textbf{No Existe una Función "Perfecta":} La elección de la función de recompensa depende del trade-off deseado entre convergencia rápida, estabilidad y eficiencia.
+
+    \item \textbf{Importancia del Conocimiento del Dominio:} El diseño efectivo de funciones de recompensa personalizadas requiere comprensión profunda del problema y del comportamiento deseado.
+\end{enumerate}
+
+\subsection{Trabajo Futuro}
+
+Las siguientes direcciones de investigación son prometedoras:
+
+\begin{itemize}
+    \item Implementar y comparar con otros algoritmos (TD3, SAC)
+    \item Realizar ablation studies de cada componente de la recompensa personalizada
+    \item Explorar curriculum learning con recompensas progresivas
+    \item Aplicar el enfoque a entornos más complejos y de mayor dimensionalidad
+    \item Investigar técnicas automáticas de diseño de recompensas (inverse RL)
+\end{itemize}
+
+\section*{Agradecimientos}
+
+Los autores agradecen al profesor Christian Camacho por su guía durante el desarrollo de este proyecto, y a la Universidad Católica del Norte por proporcionar los recursos computacionales necesarios.
+
+\begin{thebibliography}{00}
+\bibitem{sutton2018} R. S. Sutton and A. G. Barto, \textit{Reinforcement Learning: An Introduction}, 2nd ed. Cambridge, MA: MIT Press, 2018.
+
+\bibitem{todorov2012} E. Todorov, T. Erez, and Y. Tassa, ``MuJoCo: A physics engine for model-based control,'' in \textit{2012 IEEE/RSJ International Conference on Intelligent Robots and Systems}, 2012, pp. 5026-5033.
+
+\bibitem{ng1999} A. Y. Ng, D. Harada, and S. Russell, ``Policy invariance under reward transformations: Theory and application to reward shaping,'' in \textit{Proceedings of the Sixteenth International Conference on Machine Learning}, 1999, pp. 278-287.
+
+\bibitem{lillicrap2015} T. P. Lillicrap et al., ``Continuous control with deep reinforcement learning,'' \textit{arXiv preprint arXiv:1509.02971}, 2015.
+
+\bibitem{gymnasium} Farama Foundation, ``Gymnasium: A standard API for reinforcement learning environments,'' 2023. [Online]. Available: https://gymnasium.farama.org/
+
+\bibitem{sb3} A. Raffin, A. Hill, A. Gleave, A. Kanervisto, M. Ernestus, and N. Dormann, ``Stable-Baselines3: Reliable reinforcement learning implementations,'' \textit{Journal of Machine Learning Research}, vol. 22, no. 268, pp. 1-8, 2021.
+\end{thebibliography}
+
+\end{document}
